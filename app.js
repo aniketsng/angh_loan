@@ -194,6 +194,17 @@ async function connectExcel() {
     return;
   }
 
+  let workbookBackup;
+  try {
+    workbookBackup = await window.excelStore.readWorkbook(handle);
+  } catch (error) {
+    console.error('Could not read the selected Excel workbook.', error);
+    showToast('Could not read this workbook. Nothing was changed; choose it again or select another file.');
+    return;
+  }
+
+  const shouldRestoreBackup = !state.loans.length && !state.payments.length && workbookBackup
+    && (workbookBackup.loans.length || workbookBackup.payments.length);
   state.excelHandle = handle;
   state.excelHandleRemembered = true;
   try {
@@ -201,6 +212,14 @@ async function connectExcel() {
   } catch (error) {
     console.error('Could not remember the Excel workbook link.', error);
     state.excelHandleRemembered = false;
+  }
+  if (shouldRestoreBackup) {
+    state.loans = workbookBackup.loans;
+    state.payments = workbookBackup.payments;
+    render();
+    if (!await save()) return;
+    showSaveToast('Previous loans and repayments restored from Excel.');
+    return;
   }
   const synced = await syncExcel(state.loans, state.payments, true);
   if (synced) {
@@ -269,10 +288,15 @@ async function registerProgressiveApp() {
   if (location.protocol === 'file:' || !('serviceWorker' in navigator)) return;
   try {
     await navigator.serviceWorker.register('./service-worker.js');
-    if (navigator.storage?.persist) await navigator.storage.persist();
   } catch (error) {
     console.error('Could not enable offline app support.', error);
     showToast('Offline support could not start. Open the app from localhost or a secure website.');
+    return;
+  }
+  try {
+    if (navigator.storage?.persist) await navigator.storage.persist();
+  } catch (error) {
+    console.error('Could not request persistent browser storage.', error);
   }
 }
 

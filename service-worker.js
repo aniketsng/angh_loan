@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ledger-loan-manager-v1';
+const CACHE_NAME = 'ledger-loan-manager-v2';
 const APP_SHELL = [
   './',
   './index.html',
@@ -12,8 +12,10 @@ const APP_SHELL = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
-  self.skipWaiting();
+  event.waitUntil(Promise.all([
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)),
+    self.skipWaiting()
+  ]));
 });
 
 self.addEventListener('activate', (event) => {
@@ -32,8 +34,8 @@ self.addEventListener('fetch', (event) => {
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
-        .then((response) => {
-          if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone()));
+        .then(async (response) => {
+          if (response.ok) await caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone()));
           return response;
         })
         .catch(async () => (await caches.match(request)) || (await caches.match('./index.html')) || (await caches.match('./')))
@@ -43,8 +45,8 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith(
     caches.match(request).then((cached) => {
-      const update = fetch(request).then((response) => {
-        if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone()));
+      const update = fetch(request).then(async (response) => {
+        if (response.ok) await caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone()));
         return response;
       });
       return cached || update;

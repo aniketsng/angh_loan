@@ -4,9 +4,15 @@ A lightweight loan and repayment tracker that runs in your browser without a ser
 
 ## Run
 
-Open `index.html` in a modern Chromium-based browser. Your loans and repayment history are saved in that browser's local storage on this device.
+Run a local web server from this folder, then open `http://localhost:8000` in a modern browser:
 
-To keep an Excel backup updated automatically, choose **Connect Excel** once and select a dedicated `.xlsx` file. New loans, edits, deletions, and repayments update its **Loans** and **Repayments** sheets automatically. The browser asks for file access; if that permission needs renewing, reconnect the workbook. Without a linked workbook, records still save locally in the browser.
+```sh
+python3 -m http.server 8000
+```
+
+Use the browser's **Install app** option (or the install prompt when available) to add Ledger to your home screen. After the first online visit, the app shell is available offline. Your data and Excel file link are retained in the browser profile for this exact origin.
+
+To keep an Excel backup updated automatically, choose **Connect Excel** once and select a dedicated `.xlsx` file. New loans, edits, deletions, and repayments update its **Loans** and **Repayments** sheets automatically. If the browser needs to renew file permission after a refresh, tap **Reconnect Excel**; the saved workbook handle is reused. When setting up the PWA on a new origin, choosing a Ledger backup restores its loans and repayments automatically. Without a linked workbook, records still save locally in the browser.
 
 ## Features
 

@@ -3,6 +3,10 @@
   const storeName = 'file-handles';
   const handleKey = 'excel-workbook';
   const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  const spreadsheetNamespace = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+  const loanHeaders = ['Loan ID', 'Borrower', 'Loan type', 'Principal (INR)', 'Annual interest rate (%)', 'Term (months)', 'Monthly EMI (INR)', 'Disbursement date', 'EMIs paid', 'Outstanding principal (INR)', 'Status', 'Notes'];
+  const paymentHeaders = ['Payment ID', 'Loan ID', 'Borrower', 'Installment', 'Amount (INR)', 'Payment date', 'Reference'];
   const crcTable = Array.from({ length: 256 }, (_, value) => {
     let crc = value;
     for (let bit = 0; bit < 8; bit += 1) crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1;
@@ -108,8 +112,6 @@
   }
 
   function buildWorkbook({ loans, payments }) {
-    const loanHeaders = ['Loan ID', 'Borrower', 'Loan type', 'Principal (INR)', 'Annual interest rate (%)', 'Term (months)', 'Monthly EMI (INR)', 'Disbursement date', 'EMIs paid', 'Outstanding principal (INR)', 'Status', 'Notes'];
-    const paymentHeaders = ['Payment ID', 'Loan ID', 'Borrower', 'Installment', 'Amount (INR)', 'Payment date', 'Reference'];
     const contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>';
     const packageRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>';
     const workbook = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Loans" sheetId="1" r:id="rId1"/><sheet name="Repayments" sheetId="2" r:id="rId2"/></sheets></workbook>';
@@ -125,6 +127,90 @@
       ['xl/worksheets/sheet2.xml', worksheetXml(paymentHeaders, payments)]
     ];
     return zip(files);
+  }
+
+  function columnIndex(reference) {
+    const letters = String(reference).match(/^[A-Z]+/)?.[0];
+    if (!letters) throw new Error('Workbook contains an invalid cell reference.');
+    return [...letters].reduce((index, letter) => index * 26 + letter.charCodeAt(0) - 64, 0) - 1;
+  }
+
+  function parseWorksheet(xml, expectedHeaders) {
+    const document = new DOMParser().parseFromString(xml, 'application/xml');
+    if (document.querySelector('parsererror')) throw new Error('Workbook contains invalid worksheet data.');
+    const rows = [...document.getElementsByTagNameNS(spreadsheetNamespace, 'row')].map((row) => {
+      const values = [];
+      for (const cell of row.getElementsByTagNameNS(spreadsheetNamespace, 'c')) {
+        const index = columnIndex(cell.getAttribute('r'));
+        const inlineText = cell.getElementsByTagNameNS(spreadsheetNamespace, 't');
+        const value = inlineText.length
+          ? [...inlineText].map((text) => text.textContent).join('')
+          : cell.getElementsByTagNameNS(spreadsheetNamespace, 'v')[0]?.textContent || '';
+        values[index] = value;
+      }
+      return values;
+    });
+    if (!rows.length || expectedHeaders.some((header, index) => rows[0][index] !== header)) return null;
+    return rows.slice(1).filter((row) => row.some((value) => value !== undefined && value !== '')).map((row) => expectedHeaders.map((_, index) => row[index] ?? ''));
+  }
+
+  async function readWorkbook(handle) {
+    const file = await handle.getFile();
+    if (!file.size) return null;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const view = new DataView(bytes.buffer);
+    const files = new Map();
+    let offset = 0;
+    while (offset + 30 <= bytes.length && view.getUint32(offset, true) === 0x04034b50) {
+      const method = view.getUint16(offset + 8, true);
+      const flags = view.getUint16(offset + 6, true);
+      const expectedCrc = view.getUint32(offset + 14, true);
+      const size = view.getUint32(offset + 22, true);
+      const nameSize = view.getUint16(offset + 26, true);
+      const extraSize = view.getUint16(offset + 28, true);
+      if (method !== 0 || flags & 0x08) return null;
+      const nameStart = offset + 30;
+      const contentStart = nameStart + nameSize + extraSize;
+      const name = decoder.decode(bytes.slice(nameStart, nameStart + nameSize));
+      const content = bytes.slice(contentStart, contentStart + size);
+      if (content.length !== size || crc32(content) !== expectedCrc) throw new Error('Workbook archive is incomplete or damaged.');
+      files.set(name, decoder.decode(content));
+      offset = contentStart + size;
+    }
+
+    const loansXml = files.get('xl/worksheets/sheet1.xml');
+    const paymentsXml = files.get('xl/worksheets/sheet2.xml');
+    if (!loansXml || !paymentsXml) return null;
+    const loanRows = parseWorksheet(loansXml, loanHeaders);
+    const paymentRows = parseWorksheet(paymentsXml, paymentHeaders);
+    if (!loanRows || !paymentRows) return null;
+    const loans = loanRows.map((row) => ({
+      id: row[0],
+      borrower: row[1],
+      type: row[2],
+      principal: Number(row[3]),
+      rate: Number(row[4]),
+      term: Number(row[5]),
+      emi: Number(row[6]),
+      startDate: row[7],
+      notes: row[11],
+      createdAt: new Date().toISOString()
+    }));
+    if (loans.some((loan) => !loan.id || !loan.borrower || !Number.isFinite(loan.principal) || !Number.isFinite(loan.rate) || !Number.isInteger(loan.term) || !loan.startDate)) {
+      throw new Error('Workbook has incomplete loan records.');
+    }
+    const payments = paymentRows.map((row) => ({
+      id: row[0],
+      loanId: row[1],
+      installment: Number(row[3]),
+      amount: Number(row[4]),
+      paidDate: row[5],
+      note: row[6]
+    }));
+    if (payments.some((payment) => !payment.id || !payment.loanId || !Number.isInteger(payment.installment) || !Number.isFinite(payment.amount) || !payment.paidDate)) {
+      throw new Error('Workbook has incomplete repayment records.');
+    }
+    return { loans, payments };
   }
 
   function openDatabase() {
@@ -175,5 +261,5 @@
     }
   }
 
-  window.excelStore = { buildWorkbook, loadHandle, saveHandle, sync };
+  window.excelStore = { buildWorkbook, loadHandle, readWorkbook, saveHandle, sync };
 })();
