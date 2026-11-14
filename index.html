@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#17392f" />
+    <meta name="description" content="A simple, private dashboard to track loans and repayments." />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Ledger — Loan Manager</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/ledger-192.png" />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./excel-store.js" defer></script>
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#overview" aria-label="Ledger home">
+          <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span class="brand-name">ledger<span>.</span></span>
+        </a>
+        <div class="workspace-label">WORKSPACE</div>
+        <nav class="main-nav" aria-label="Main navigation">
+          <button class="nav-item active" type="button" data-view="overview"><span class="nav-icon">◫</span>Overview</button>
+          <button class="nav-item" type="button" data-view="loans"><span class="nav-icon">▤</span>All loans<span id="loan-count" class="nav-count"></span></button>
+          <button class="nav-item" type="button" data-view="payments"><span class="nav-icon">↗</span>Repayments</button>
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="privacy-note"><span class="privacy-dot"></span><span><strong>Your data stays yours</strong><br />Saved on this device only</span></div>
+          <div class="sidebar-credit">PERSONAL FINANCE<br /><span>LEDGER LOAN MANAGER</span></div>
+        </div>
+      </aside>
+
+      <main class="main-area">
+        <header class="topbar">
+          <a class="mobile-brand" href="#overview" aria-label="Ledger home">
+            <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+            <span class="brand-name">ledger<span>.</span></span>
+          </a>
+          <div class="breadcrumb"><span>Workspace</span><span class="breadcrumb-slash">/</span><strong id="current-section">Overview</strong></div>
+          <div class="topbar-actions"><span class="today-label" id="today-label"></span><button class="button button-quiet button-small install-app" id="install-app" type="button" hidden>Install</button><span class="excel-status" id="excel-status" aria-live="polite">Excel not connected</span><button class="button button-quiet button-small excel-connect" id="excel-connect" type="button">Connect Excel</button></div>
+        </header>
+        <section class="content" id="view-root" aria-live="polite"></section>
+        <footer class="app-footer">A clearer view of every loan. <span>Private by design · Stored in this browser</span></footer>
+      </main>
+    </div>
+
+    <dialog id="loan-dialog" class="dialog">
+      <form id="loan-form">
+        <div class="dialog-heading">
+          <div><p class="eyebrow" id="loan-dialog-eyebrow">NEW LOAN</p><h2 id="loan-dialog-title">Add a loan</h2></div>
+          <button class="dialog-close" type="button" data-close="loan-dialog" aria-label="Close">×</button>
+        </div>
+        <input id="loan-id" type="hidden" />
+        <div class="form-grid">
+          <label class="form-field"><span>Borrower name</span><input id="borrower" name="borrower" required maxlength="80" placeholder="e.g. Maya Sharma" /></label>
+          <label class="form-field"><span>Loan type</span><select id="loan-type" name="type"><option>Personal</option><option>Home</option><option>Vehicle</option><option>Education</option><option>Business</option><option>Other</option></select></label>
+          <label class="form-field"><span>Principal amount (₹)</span><input id="principal" name="principal" type="number" min="1" step="1" required placeholder="500000" /></label>
+          <label class="form-field"><span>Annual interest rate (%)</span><input id="rate" name="rate" type="number" min="0" max="100" step="0.01" required placeholder="10.5" /></label>
+          <label class="form-field"><span>Loan term (months)</span><input id="term" name="term" type="number" min="1" max="600" step="1" required placeholder="36" /></label>
+          <label class="form-field"><span>Disbursement date</span><input id="start-date" name="startDate" type="date" required /></label>
+          <label class="form-field form-wide"><span>Notes <em>optional</em></span><textarea id="loan-notes" name="notes" rows="3" maxlength="400" placeholder="Add a reference or a short note"></textarea></label>
+        </div>
+        <p class="form-hint">The monthly EMI is calculated using the reducing-balance method.</p>
+        <div class="dialog-footer"><button class="button button-quiet" type="button" data-close="loan-dialog">Cancel</button><button class="button button-primary" type="submit" id="loan-submit">Save loan <span>↗</span></button></div>
+      </form>
+    </dialog>
+
+    <dialog id="payment-dialog" class="dialog">
+      <form id="payment-form">
+        <div class="dialog-heading">
+          <div><p class="eyebrow">REPAYMENT</p><h2>Record an EMI</h2></div>
+          <button class="dialog-close" type="button" data-close="payment-dialog" aria-label="Close">×</button>
+        </div>
+        <label class="form-field form-wide"><span>Loan</span><select id="payment-loan" required></select></label>
+        <div class="payment-preview" id="payment-preview"></div>
+        <div class="form-grid payment-form-grid">
+          <label class="form-field"><span>Payment date</span><input id="payment-date" type="date" required /></label>
+          <label class="form-field"><span>Reference <em>optional</em></span><input id="payment-note" maxlength="100" placeholder="Transaction ID" /></label>
+        </div>
+        <div class="dialog-footer"><button class="button button-quiet" type="button" data-close="payment-dialog">Cancel</button><button class="button button-primary" type="submit">Save repayment <span>↗</span></button></div>
+      </form>
+    </dialog>
+
+    <dialog id="excel-dialog" class="dialog excel-dialog">
+      <div class="dialog-heading">
+        <div><p class="eyebrow">AUTOMATIC BACKUP</p><h2>Connect an Excel workbook</h2></div>
+        <button class="dialog-close" type="button" data-close="excel-dialog" aria-label="Close">×</button>
+      </div>
+      <p class="excel-dialog-copy">Choose a dedicated <strong>.xlsx</strong> file once. New loans, repayments, edits, and deletions will sync to it automatically. Any existing contents in the selected file will be replaced.</p>
+      <div class="dialog-footer"><button class="button button-quiet" type="button" data-close="excel-dialog">Not now</button><button class="button button-primary" id="excel-select-file" type="button">Choose workbook <span>↗</span></button></div>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
